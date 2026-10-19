@@ -20,7 +20,8 @@ and nobody has to edit code.
 - **Check-ins and removal.** Everyone gets 35 minutes in queue. 5 minutes before that runs out, the bot mentions them
   with a **Stay in Queue / Leave Queue** check-in. Staying adds 30 more minutes. If they don't answer, they're
   removed from the queue and the channel is told why.
-- **Quiet hours.** Players pick days and times (presets or their own, like 10pm to 7am) when they don't want pings.
+- **Quiet hours.** Players pick their own timezone, then the days and times (presets or their own, like 10pm to 7am)
+  when they don't want pings.
   While their quiet hours are on, the bot takes the ping role off them, and gives it back when they end. Someone who
   turned pings off with the button stays off.
 
@@ -36,7 +37,7 @@ and nobody has to edit code.
 | `/setup show` | admins | show this server's settings and anything that needs fixing |
 | `/setup ping-role [role]` | admins | the role pinged when people join (leave empty to turn pings off) |
 | `/setup ping-channel [channel]` | admins | where pings, check-ins and match messages go (default: the panel's channel) |
-| `/setup timezone name` | admins | the timezone quiet hours use, like `America/New_York` (default `UTC`) |
+| `/setup timezone name` | admins | the default timezone for players who haven't picked their own, like `America/New_York` (default `UTC`) |
 | `/setup timers queue_minutes warning_minutes stay_minutes` | admins | how long people stay in queue (default 35, 5, 30) |
 | `/setup add-queue name players` | admins | add a queue button, or change a queue's player count (up to 5 queues) |
 | `/setup remove-queue name` | admins | remove a queue button |
@@ -78,5 +79,4 @@ python -m pytest tests
 ## Limits
 
 - One process and one JSON file. Plenty for many servers, but not built to run several copies at once.
-- Quiet hours use one timezone per server, set by an admin.
 - Up to 5 queues per server and 10 quiet hours schedules per player.

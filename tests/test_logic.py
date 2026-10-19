@@ -77,6 +77,7 @@ def test_state_round_trip():
     g.queue("Doubles").append(qb.QueueEntry(7, "Player", 1.0, 2.0, prompted=True, prompt_message_id=9))
     g.quiet_hours[7] = [{"days": [0], "start": "09:00", "end": "17:00"}]
     g.quiet_muted.append(7)
+    g.user_timezones[7] = "Europe/London"
     qb.save_state()
 
     loaded = qb.load_state()[123]
@@ -86,3 +87,32 @@ def test_state_round_trip():
     assert loaded.queues["Doubles"][0].prompt_message_id == 9
     assert loaded.quiet_hours == {7: [{"days": [0], "start": "09:00", "end": "17:00"}]}
     assert loaded.quiet_muted == [7]
+    assert loaded.user_timezones == {7: "Europe/London"}
+
+
+def test_find_timezone():
+    assert qb.find_timezone("America/Chicago") == "America/Chicago"
+    assert qb.find_timezone("chicago") == "America/Chicago"
+    assert qb.find_timezone("New York") == "America/New_York"
+    assert qb.find_timezone("utc") == "UTC"
+    assert qb.find_timezone("Atlantis") is None
+    assert qb.find_timezone("  ") is None
+
+
+def test_quiet_hours_use_the_players_own_timezone():
+    g = qb.GuildState(timezone="UTC")
+    g.quiet_hours[1] = [{"days": list(range(7)), "start": "00:00", "end": "24:00"}]
+    assert qb.user_tz_name(g, 1) == "UTC"
+    g.user_timezones[1] = "Asia/Tokyo"
+    assert qb.user_tz_name(g, 1) == "Asia/Tokyo"
+    assert qb.user_tz_name(g, 2) == "UTC"
+    # A rule that is only quiet right now in the player's zone, not the server's
+    from datetime import datetime, timedelta
+    tokyo_now = datetime.now(qb.zone("Asia/Tokyo"))
+    start = tokyo_now.strftime("%H:%M")
+    end = (tokyo_now + timedelta(minutes=2)).strftime("%H:%M")
+    if start < end:
+        g.quiet_hours[1] = [{"days": [tokyo_now.weekday()], "start": start, "end": end}]
+        assert qb.user_in_quiet_hours(g, 1)
+        del g.user_timezones[1]
+        assert not qb.user_in_quiet_hours(g, 1)

@@ -127,7 +127,8 @@ This is the role the bot pings when people join the queue. People who want queue
 
 1. `/setup ping-role` and pick your `Queue Pings` role.
 2. `/setup timezone` and start typing your city or region (like `Chicago`, `London`, `Sydney`), then pick it from the
-   list. Quiet hours use this timezone, so pick the one most of your players are in.
+   list. Each player picks their own timezone the first time they set quiet hours. This one is just the default
+   (and the first choice they're offered), so pick the one most of your players are in.
 3. *(Optional)* `/setup ping-channel` and pick a channel if you want pings, check-ins and match messages somewhere
    other than the queue panel's channel.
 4. *(Optional)* Change the queues. You start with one, **Doubles** for 4 players.
@@ -164,6 +165,8 @@ Paste this in your server if it helps:
 >   keep going, or you'll be taken out of the queue.
 > • Press **Leave Queue** any time to leave.
 > • Press **🌙 Quiet Hours** (or type `/quiet-hours`) to pick times you don't want pings, like weeknights after 11pm.
+>   The first time, it asks which timezone you're in, so the times follow your own clock. Press **🌍 Timezone** there
+>   to change it.
 >   The bot pauses your pings during those times and turns them back on after.
 
 ## Troubleshooting
@@ -175,7 +178,7 @@ Paste this in your server if it helps:
 | The bot is offline | It isn't running. On your computer, start it again (Step 3A, step 5). On Railway, check the logs. |
 | Pings appear but nobody gets notified | Turn on **"Allow anyone to @mention this role"** for the ping role (Step 4.1). |
 | "I can't hand out @Queue Pings" | Give the bot **Manage Roles** and drag its role above the ping role (Step 4.1). |
-| Quiet hours are off by a few hours | Set the right timezone with `/setup timezone`. |
+| Someone's quiet hours are off by a few hours | They should open Quiet Hours and press **🌍 Timezone** to pick their own. For players who never picked one, check the default with `/setup timezone`. |
 | The panel stopped updating | Someone deleted it. Run `/queue` again. |
 | Settings disappeared after an update on Railway | The volume is missing or `QUEUE_STATE_FILE` doesn't point into it (Step 3B, steps 3 and 4). |
 | `Set the DISCORD_BOT_TOKEN environment variable` when starting | The token wasn't set in that terminal window. Do Step 3A, step 5 again in the same window you start the bot from. |

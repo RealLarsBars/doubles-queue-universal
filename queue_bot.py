@@ -54,7 +54,7 @@ DAY_OPTIONS = [
     ("Sundays", [6]),
 ]
 
-# Times are "HH:MM" in the server's timezone. An end of "24:00" means midnight at the end of the day.
+# Times are "HH:MM" in the player's own timezone. An end of "24:00" means midnight at the end of the day.
 TIME_OPTIONS = [
     ("Work hours (9 AM - 5 PM)", "09:00", "17:00"),
     ("Daytime (8 AM - 6 PM)", "08:00", "18:00"),
@@ -62,6 +62,31 @@ TIME_OPTIONS = [
     ("Night (10 PM - 7 AM)", "22:00", "07:00"),
     ("Late night (12 AM - 8 AM)", "00:00", "08:00"),
     ("All day", "00:00", "24:00"),
+]
+
+# Offered when a player picks their timezone; anything else can be typed in.
+COMMON_TIMEZONES = [
+    ("Pacific (Los Angeles)", "America/Los_Angeles"),
+    ("Mountain (Denver)", "America/Denver"),
+    ("Arizona (Phoenix)", "America/Phoenix"),
+    ("Central (Chicago)", "America/Chicago"),
+    ("Eastern (New York)", "America/New_York"),
+    ("Atlantic (Halifax)", "America/Halifax"),
+    ("Alaska (Anchorage)", "America/Anchorage"),
+    ("Hawaii (Honolulu)", "Pacific/Honolulu"),
+    ("Mexico City", "America/Mexico_City"),
+    ("Brazil (Sao Paulo)", "America/Sao_Paulo"),
+    ("UK & Ireland (London)", "Europe/London"),
+    ("Central Europe (Paris, Berlin)", "Europe/Paris"),
+    ("Eastern Europe (Helsinki, Athens)", "Europe/Helsinki"),
+    ("Moscow", "Europe/Moscow"),
+    ("Gulf (Dubai)", "Asia/Dubai"),
+    ("India (Kolkata)", "Asia/Kolkata"),
+    ("Singapore, Manila, Perth", "Asia/Singapore"),
+    ("Japan & Korea (Tokyo)", "Asia/Tokyo"),
+    ("Eastern Australia (Sydney)", "Australia/Sydney"),
+    ("New Zealand (Auckland)", "Pacific/Auckland"),
+    ("UTC", "UTC"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -97,6 +122,7 @@ class GuildState:
     panel_message: Optional[Dict[str, int]] = None
     quiet_board_message: Optional[Dict[str, int]] = None
     quiet_hours: Dict[int, List[dict]] = field(default_factory=dict)  # user id -> [{"days", "start", "end"}]
+    user_timezones: Dict[int, str] = field(default_factory=dict)  # user id -> timezone their quiet hours use
     quiet_active: List[int] = field(default_factory=list)  # users whose quiet hours were active at the last check
     quiet_muted: List[int] = field(default_factory=list)   # users whose ping role the bot took away for quiet hours
 
@@ -106,6 +132,7 @@ class GuildState:
     def to_json(self) -> dict:
         data = asdict(self)
         data["quiet_hours"] = {str(k): v for k, v in self.quiet_hours.items()}
+        data["user_timezones"] = {str(k): v for k, v in self.user_timezones.items()}
         return data
 
     @classmethod
@@ -118,6 +145,7 @@ class GuildState:
                 setattr(g, name, data[name])
         g.queues = {mode: [QueueEntry(**e) for e in entries] for mode, entries in data.get("queues", {}).items()}
         g.quiet_hours = {int(k): v for k, v in data.get("quiet_hours", {}).items()}
+        g.user_timezones = {int(k): v for k, v in data.get("user_timezones", {}).items()}
         return g
 
 
@@ -182,11 +210,39 @@ def save_state() -> None:
 # ---------------------------------------------------------------------------
 
 
-def server_tz(g: GuildState) -> ZoneInfo:
+def zone(name: str) -> ZoneInfo:
     try:
-        return ZoneInfo(g.timezone)
+        return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
         return ZoneInfo("UTC")
+
+
+def user_tz_name(g: GuildState, user_id: int) -> str:
+    """The player's own timezone, or the server's if they haven't picked one."""
+    return g.user_timezones.get(user_id, g.timezone)
+
+
+def local_clock(tz_name: str) -> str:
+    return datetime.now(zone(tz_name)).strftime("%I:%M %p").lstrip("0")
+
+
+ALL_TIMEZONES = sorted(available_timezones())
+
+
+def find_timezone(text: str) -> Optional[str]:
+    """Match what someone typed ("America/Chicago", "chicago", "new york") to a timezone name."""
+    wanted = "_".join(text.strip().split()).lower()
+    if not wanted:
+        return None
+    for tz in ALL_TIMEZONES:
+        if tz.lower() == wanted:
+            return tz
+    for tz in ALL_TIMEZONES:  # a city: the last part of the name
+        if "/" in tz and tz.rsplit("/", 1)[1].lower() == wanted:
+            return tz
+    if wanted in ("utc", "gmt"):
+        return "UTC"
+    return None
 
 
 def clean(name: str) -> str:
@@ -268,7 +324,7 @@ def in_quiet_hours(rules: List[dict], now_local: datetime) -> bool:
 
 
 def user_in_quiet_hours(g: GuildState, user_id: int) -> bool:
-    return in_quiet_hours(g.quiet_hours.get(user_id, []), datetime.now(server_tz(g)))
+    return in_quiet_hours(g.quiet_hours.get(user_id, []), datetime.now(zone(user_tz_name(g, user_id))))
 
 
 def describe_rule(rule: dict) -> str:
@@ -368,11 +424,16 @@ def build_quiet_embed(g: GuildState, user_id: int, note: str = "") -> discord.Em
     rules = g.quiet_hours.get(user_id, [])
     current = "\n".join(f"**{i}.** {describe_rule(r)}" for i, r in enumerate(rules, 1)) or "None yet."
     status = "🌙 Quiet hours are **on** right now." if user_in_quiet_hours(g, user_id) else ""
+    tz_name = user_tz_name(g, user_id)
+    tz_line = (f"Your timezone: **{tz_name}** (it's {local_clock(tz_name)} there now)."
+               if user_id in g.user_timezones else
+               f"You haven't picked a timezone, so the server's is used: **{tz_name}** "
+               f"(it's {local_clock(tz_name)} there now). Press **Timezone** to pick yours.")
     description = (
         f"{note}\n\n" if note else ""
     ) + (
         "While your quiet hours are on, you won't get queue pings.\n"
-        f"Times are in the server's timezone: **{g.timezone}**.\n\n"
+        f"{tz_line}\n\n"
         f"**Your quiet hours**\n{current}\n{status}"
     )
     return discord.Embed(title="🌙 Quiet Hours", description=description, color=discord.Color.dark_purple())
@@ -385,10 +446,10 @@ def build_quiet_board_embed(guild: Optional[discord.Guild], g: GuildState) -> di
             continue
         member = guild.get_member(uid) if guild else None
         name = clean(member.display_name) if member else f"<@{uid}>"
-        lines.append(f"• **{name}**: " + " | ".join(describe_rule(r) for r in rules))
+        lines.append(f"• **{name}**: " + " | ".join(describe_rule(r) for r in rules) + f" ({user_tz_name(g, uid)})")
     return discord.Embed(
         title="🌙 Everyone's Quiet Hours",
-        description=("\n".join(lines) or "Nobody has set quiet hours yet.") + f"\n\n-# Times are in {g.timezone}.",
+        description="\n".join(lines) or "Nobody has set quiet hours yet.",
         color=discord.Color.dark_purple(),
     )
 
@@ -666,11 +727,15 @@ class QuietHoursMenu(discord.ui.View):
 
     @discord.ui.button(label="Add a Schedule", style=discord.ButtonStyle.primary, emoji="➕", row=1)
     async def add(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = discord.ui.View(timeout=900)
-        view.add_item(DaySelect())
-        await interaction.response.edit_message(
-            embed=discord.Embed(title="🌙 Quiet Hours", description="**Step 1 of 2:** which days?",
-                                color=discord.Color.dark_purple()), view=view)
+        g = gs(interaction.guild_id)
+        if interaction.user.id not in g.user_timezones:  # ask once, before their first schedule
+            await show_timezone_picker(interaction, then_add=True)
+        else:
+            await show_day_picker(interaction)
+
+    @discord.ui.button(label="Timezone", style=discord.ButtonStyle.secondary, emoji="🌍", row=1)
+    async def change_timezone(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await show_timezone_picker(interaction, then_add=False)
 
     @discord.ui.button(label="Clear All", style=discord.ButtonStyle.danger, emoji="🗑️", row=1)
     async def clear(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -706,6 +771,77 @@ class RemoveRuleSelect(discord.ui.Select):
             view=QuietHoursMenu(g, interaction.user.id))
 
 
+async def show_day_picker(interaction: discord.Interaction) -> None:
+    view = discord.ui.View(timeout=900)
+    view.add_item(DaySelect())
+    await interaction.response.edit_message(
+        embed=discord.Embed(title="🌙 Quiet Hours", description="**Step 1 of 2:** which days?",
+                            color=discord.Color.dark_purple()), view=view)
+
+
+async def show_timezone_picker(interaction: discord.Interaction, then_add: bool) -> None:
+    g = gs(interaction.guild_id)
+    view = discord.ui.View(timeout=900)
+    view.add_item(TimezoneSelect(g, then_add))
+    await interaction.response.edit_message(
+        embed=discord.Embed(
+            title="🌍 Your Timezone",
+            description="Which timezone are you in? Your quiet hours follow your own clock.\n"
+                        "Each option shows the time there right now. Not listed? Pick **Somewhere else** and type it.",
+            color=discord.Color.dark_purple()),
+        view=view)
+
+
+async def set_user_timezone(interaction: discord.Interaction, tz_name: str, then_add: bool) -> None:
+    g = gs(interaction.guild_id)
+    g.user_timezones[interaction.user.id] = tz_name
+    await sync_quiet_role(interaction.guild, g, interaction.user)
+    save_state()
+    await refresh_quiet_board(interaction.guild)
+    if then_add:
+        await show_day_picker(interaction)
+    else:
+        await interaction.response.edit_message(
+            embed=build_quiet_embed(g, interaction.user.id, f"🌍 Timezone set to **{tz_name}**."),
+            view=QuietHoursMenu(g, interaction.user.id))
+
+
+class TimezoneSelect(discord.ui.Select):
+    def __init__(self, g: GuildState, then_add: bool):
+        self.then_add = then_add
+        options = [discord.SelectOption(
+            label=f"Same as the server ({g.timezone})"[:100], value=g.timezone,
+            description=f"{local_clock(g.timezone)} there now")]
+        options += [discord.SelectOption(label=label, value=tz, description=f"{local_clock(tz)} there now")
+                    for label, tz in COMMON_TIMEZONES if tz != g.timezone]
+        options.append(discord.SelectOption(label="Somewhere else...", value="other", emoji="✏️",
+                                            description="Type a city or timezone name"))
+        super().__init__(placeholder="Pick your timezone...", options=options[:25])
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "other":
+            await interaction.response.send_modal(TimezoneModal(self.then_add))
+            return
+        await set_user_timezone(interaction, self.values[0], self.then_add)
+
+
+class TimezoneModal(discord.ui.Modal, title="Your Timezone"):
+    name = discord.ui.TextInput(label="City or timezone", placeholder="e.g. Toronto, Berlin, Asia/Manila", max_length=60)
+
+    def __init__(self, then_add: bool):
+        super().__init__()
+        self.then_add = then_add
+
+    async def on_submit(self, interaction: discord.Interaction):
+        tz_name = find_timezone(self.name.value)
+        if tz_name is None:
+            await interaction.response.send_message(
+                f"I couldn't find `{self.name.value}`. Try a big city near you in the same timezone, like `Toronto` "
+                "or `Berlin`, or a full name like `America/Toronto`.", ephemeral=True)
+            return
+        await set_user_timezone(interaction, tz_name, self.then_add)
+
+
 class DaySelect(discord.ui.Select):
     def __init__(self):
         options = [discord.SelectOption(label=label, value=str(i)) for i, (label, _) in enumerate(DAY_OPTIONS)]
@@ -719,7 +855,7 @@ class DaySelect(discord.ui.Select):
         await interaction.response.edit_message(
             embed=discord.Embed(
                 title="🌙 Quiet Hours",
-                description=f"Days: **{label}**\n**Step 2 of 2:** what time? (in {g.timezone})",
+                description=f"Days: **{label}**\n**Step 2 of 2:** what time? (in {user_tz_name(g, interaction.user.id)})",
                 color=discord.Color.dark_purple()),
             view=view)
 
@@ -919,7 +1055,7 @@ def build_setup_embed(guild: discord.Guild, g: GuildState) -> discord.Embed:
     embed.add_field(name="Ping channel",
                     value=f"<#{g.ping_channel_id}>" if g.ping_channel_id else "same channel as the panel")
     embed.add_field(name="Queue panel", value=panel)
-    embed.add_field(name="Timezone", value=g.timezone)
+    embed.add_field(name="Default timezone", value=g.timezone)
     embed.add_field(name="Timers", value=(
         f"In queue for {g.join_minutes} min, check-in {g.warning_minutes} min before the end, "
         f"\"Stay\" adds {g.renew_minutes} min"), inline=False)
@@ -961,16 +1097,13 @@ async def setup_ping_channel(interaction: discord.Interaction, channel: Optional
         ephemeral=True)
 
 
-ALL_TIMEZONES = sorted(available_timezones())
-
-
 async def timezone_autocomplete(interaction: discord.Interaction, current: str):
     current = current.lower().replace(" ", "_")
     matches = [tz for tz in ALL_TIMEZONES if current in tz.lower()]
     return [app_commands.Choice(name=tz, value=tz) for tz in matches[:25]]
 
 
-@setup_group.command(name="timezone", description="The timezone quiet hours use, like America/New_York.")
+@setup_group.command(name="timezone", description="Default timezone for quiet hours, for players who haven't picked one.")
 @app_commands.autocomplete(name=timezone_autocomplete)
 async def setup_timezone(interaction: discord.Interaction, name: str):
     try:
@@ -983,8 +1116,9 @@ async def setup_timezone(interaction: discord.Interaction, name: str):
     g = gs(interaction.guild_id)
     g.timezone = name
     save_state()
-    now = datetime.now(ZoneInfo(name)).strftime("%I:%M %p").lstrip("0")
-    await interaction.response.send_message(f"Timezone set to **{name}** (it's {now} there now).", ephemeral=True)
+    await interaction.response.send_message(
+        f"Default timezone set to **{name}** (it's {local_clock(name)} there now). Players who picked their own "
+        "timezone keep theirs.", ephemeral=True)
     await refresh_quiet_board(interaction.guild)
 
 
